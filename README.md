@@ -7,6 +7,7 @@ AWS에 **실시간 시세 수집·조회 서비스**를 3계층(웹·앱, DB, �
 - **목적**: 서버관제·클라우드 운영 직무 지원용 포트폴리오. "발생 → 감지 → 원인 확인 → 복구 → 재발 방지" 흐름을 직접 재현하고 문서로 남긴다.
 - **배경**: 이전 Terraform 실습과 Prometheus·Grafana 모니터링 실습을 복습하면서, 네트워크 분리와 계층별 방화벽을 새로 추가한다.
 - **핵심 포인트**: 외부와 내부 두 지점에서 헬스체크해서 "앱 문제인지, 네트워크·방화벽 문제인지"를 그래프로 구분한다.
+- **자동화 경계**: 인프라(네트워크·방화벽)는 Terraform, 서버 안(설치·설정·장애 조치)은 Ansible이 맡는다.
 - **데이터 소스**: 업비트 Quotation API(코인 시세). 키 없이 쓸 수 있고 24시간 시세가 움직여서 평일 저녁·주말 언제 테스트해도 데이터가 바뀐다. 갱신이 멈추면 시간대와 상관없이 장애로 본다. 코인은 데이터 소스일 뿐이고, 보여주고 싶은 것은 인프라와 관제다.
 - **저장소**: [ekimje/aws-network-incident-monitoring-lab](https://github.com/ekimje/aws-network-incident-monitoring-lab)
 
@@ -17,6 +18,7 @@ AWS에 **실시간 시세 수집·조회 서비스**를 3계층(웹·앱, DB, �
 **1차 최소 완성본**
 
 - [ ] Terraform으로 VPC, 서브넷 2개(public/private), EC2 3대, 계층별 SG 구성
+- [ ] Ansible 플레이북으로 서버 3대 구성 (Docker, 앱, PostgreSQL, node\_exporter, 모니터링 스택)
 - [ ] 앱(시세 수집기 + 조회 웹) 배포 후 시세 저장, `/health`, `/metrics` 동작 확인
 - [ ] Prometheus + node\_exporter + blackbox\_exporter + Grafana 대시보드 1개
 - [ ] Alertmanager 알림 2개 이상 (서비스 다운, 5xx 증가, 시세 갱신 중단)
@@ -28,7 +30,12 @@ AWS에 **실시간 시세 수집·조회 서비스**를 3계층(웹·앱, DB, �
 - [ ] Loki + Promtail로 앱 에러 로그 수집
 - [ ] 부하 테스트(k6), 컨테이너·DB 중지, 디스크 풀 시나리오
 - [ ] 외부 API 경로 차단(SG 아웃바운드), 업비트 요청 제한 초과 시나리오
+- [ ] Ansible 런북 플레이북(앱·DB 재시작, 디스크 정리): 알림을 보고 사람이 원인을 확인한 뒤 실행 (반자동)
 - [ ] (아이디어) 주식 시세 API를 두 번째 소스로 추가하고, 장 운영 시간에 맞춰 소스별 알림 시간대 분리
+
+**3차 (시간이 남으면)**
+
+- [ ] 장애 자동 해결: 장애 알림 → Ansible 자동 조치 → 조치 결과 알림 → 해결 알림 (Discord)
 
 범위 밖: 멀티 AZ·ALB·Auto Scaling 같은 고가용성 구성, HTTPS·도메인, CI/CD, 쿠버네티스.
 
@@ -51,6 +58,8 @@ flowchart LR
     end
     web -->|5432| db
     web -->|시세 요청 HTTPS 443| upbit[업비트 Quotation API]
+    pc[내 PC · WSL<br/>Terraform · Ansible] -.->|SSH 22| web
+    web -.->|SSH 점프| db
     mon -.->|내부 HTTP 80| web
     mon -.->|DB TCP 5432| db
     mon -.->|외부 HTTP 체크| inet
@@ -74,6 +83,8 @@ flowchart LR
 
 아웃바운드는 SG 기본값(전체 허용)을 쓰지 않고 Terraform에 명시한다. 웹·앱 SG는 업비트 API 호출용 443, DB 접속용 5432를 열고, 웹·앱 서버는 public 서브넷에 있어서 NAT 없이 인터넷으로 나간다.
 
+Ansible은 내 IP에서 SSH(22)로 웹·앱·모니터링 서버에 접속하고, private 서브넷의 DB 서버에는 웹·앱 서버를 점프 호스트로 거쳐 들어간다(ProxyJump). 위 SG 규칙만으로 충분하다. 3차 자동 해결을 넣을 때만 "모니터링 SG → 웹·앱·DB SG 22" 규칙을 추가한다.
+
 NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에서 규칙을 추가한다.
 
 ## 기술 스택
@@ -84,7 +95,8 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 | 클라우드 | AWS VPC, EC2, Security Group, NACL | Flow Logs는 2차 |
 | 앱 | Python FastAPI, PostgreSQL | 바이브 코딩, 코드 이해 정리 필수 |
 | 데이터 소스 | 업비트 Quotation API | 키 불필요, 주식 API는 2차 아이디어 |
-| 배포 | Docker, Docker Compose, Nginx | user\_data로 자동 설치 |
+| 배포 | Docker, Docker Compose, Nginx | 컨테이너 `restart: unless-stopped` |
+| 구성 관리 | Ansible | 서버 설치·설정, 런북. Windows에서는 WSL(Ubuntu)에서 실행 |
 | 모니터링 | Prometheus, node\_exporter, blackbox\_exporter, Grafana | 모니터링 전용 EC2 |
 | 알림 | Alertmanager → Discord 웹훅 | Slack이나 이메일도 가능 |
 | 로그 (2차) | Loki, Promtail | 메모리 여유 보고 결정 |
@@ -96,8 +108,17 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 
 - 모듈 분리: `network`(VPC, 서브넷, 라우팅, NACL), `security`(SG), `compute`(EC2)
 - 내 IP, 인스턴스 타입, 키 이름은 변수로 관리하고 `terraform.tfvars`는 커밋하지 않음
-- EC2 `user_data`로 Docker 설치와 Compose 실행까지 자동화
-- `outputs`로 각 서버 IP 출력, `apply` 한 번으로 전체 환경 재현
+- EC2 `user_data`는 쓰지 않는다. 서버 안 설치·설정은 Ansible이 맡는다
+- `outputs`로 각 서버 IP 출력 → Ansible 인벤토리에 사용. `terraform apply` + `ansible-playbook` 두 줄로 전체 환경 재현
+
+### Ansible
+
+- **컨트롤 노드**: 내 PC의 WSL(Ubuntu). Ansible은 Windows에서 직접 실행되지 않는다
+- **인벤토리**: Terraform output의 IP로 작성. DB 서버는 웹·앱 서버를 거치는 ProxyJump 설정
+- **구성 플레이북** `site.yml`: 역할(role)별로 나눈다 — `docker`, `app`(Compose + Nginx), `postgresql`, `node_exporter`, `monitoring`(Prometheus·blackbox·Grafana·Alertmanager)
+- **멱등성**: 여러 번 실행해도 결과가 같게 작성한다. 설치가 중간에 실패하면 서버를 다시 만들지 않고 플레이북만 다시 실행한다
+- **런북 플레이북 (2차)**: `restart-app.yml`, `restart-db.yml`, `cleanup-disk.yml`. 알림 메시지(`annotations.runbook`)에 실행할 플레이북 이름을 적어 둔다
+- **기본 자동 복구**: 프로세스가 죽는 장애는 Docker `restart: unless-stopped`가 먼저 처리한다. Ansible은 그걸로 안 되는 경우를 맡는다
 
 ### 앱 (실시간 시세 수집·조회 서비스)
 
@@ -127,6 +148,24 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 | High5xxRate | 5xx 비율 5% 이상 2분 지속 | 앱 내부 오류, DB 연결 실패 등 |
 | PriceDataStale | 마지막 갱신 후 1분 이상 지남 | 수집 중단 (외부 API 경로, 업비트 장애, DB 저장 실패 등) |
 | CollectorErrors (2차) | 수집 실패율 50% 이상 2분 지속 | 업비트 API 오류·요청 제한 초과 |
+
+Alertmanager는 `send_resolved: true`로 두어 장애가 풀리면 해결 알림도 Discord로 보낸다.
+
+### 장애 자동 해결 (3차, 시간이 남으면)
+
+```mermaid
+flowchart LR
+    am[Alertmanager] -->|장애 알림| discord[Discord]
+    am -->|웹훅| hook[웹훅 수신 서버<br/>모니터링 EC2]
+    hook -->|허용된 알림만| ansible[Ansible 런북 실행]
+    ansible -->|조치 결과| discord
+    am -->|해결 알림 send_resolved| discord
+```
+
+- **대상**: 원인과 조치가 정해진 장애만 — 앱 컨테이너 다운, DB 다운, 디스크 풀
+- **제외**: SG·NACL 장애. 원인 판단이 프로젝트의 핵심이고, 방화벽은 Terraform이 관리하는 영역이라 Ansible로 고치면 drift가 생긴다
+- **안전장치**: 허용 목록(알림 이름), 같은 알림은 10분에 1번만 실행, 조치 후에도 안 풀리면 사람에게 넘김
+- **필요한 변경**: 모니터링 서버에 Ansible 설치, 모니터링 SG → 웹·앱·DB SG 22 규칙 추가
 | DiskAlmostFull (2차) | 디스크 사용률 90% 이상 | 디스크 풀 위험 |
 
 ### VPC Flow Logs (2차)
@@ -141,11 +180,11 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 웹 SG 80포트 차단 | 웹 SG에서 0.0.0.0/0 인바운드 80 규칙 삭제 | 외부 체크 실패, 내부 체크 정상 | 앱은 정상 → 외부 경로 문제 → SG 규칙 확인 | `terraform apply`로 원래 규칙 복구 (drift 확인) | 1차 |
 | 2 | 앱→DB 경로 차단 | DB SG에서 앱 SG 출처의 5432 규칙 삭제 | `/health` 503, 5xx 급증, 시세 갱신 중단, DB TCP 체크는 정상 | DB는 살아 있음 → 앱↔DB 사이 방화벽 문제 | `terraform apply`로 복구 | 1차 |
-| 3 | 앱 컨테이너 중지 | `docker stop` | 외부·내부 체크 모두 실패, node\_exporter 정상 | 서버는 정상 → 프로세스 문제 → `docker ps` | 컨테이너 재시작, restart 정책 추가 | 2차 |
-| 4 | DB 중지 | DB 서비스 중지 | DB TCP 체크 실패, `/health` 503 | DB 서버 접속 후 서비스 상태 확인 | DB 재시작 | 2차 |
+| 3 | 앱 프로세스 강제 종료 | `docker compose exec app kill 1` | 외부·내부 체크가 잠깐 실패 후 회복, node\_exporter 정상 | `docker ps`의 STATUS(Up 몇 초), 로그로 재시작 흔적 확인 | restart 정책으로 자동 복구 확인, 반복되면 런북 `restart-app.yml` | 2차 |
+| 4 | DB 중지 | DB 서비스 중지 | DB TCP 체크 실패, `/health` 503 | DB 서버 접속 후 서비스 상태 확인 | 런북 `restart-db.yml` | 2차 |
 | 5 | NACL 아웃바운드 차단 | public 서브넷 NACL에서 아웃바운드 1024\~65535 거부 | 외부 체크 실패, SG는 정상 | SG만 봐서는 안 보임 → NACL이 stateless라 응답이 막힘 → Flow Logs `REJECT` | NACL 규칙 복구 | 2차 |
 | 6 | 부하 증가 | k6로 동시 요청 | p95 응답시간·CPU 상승 | 대시보드에서 자원 사용률 확인 | 부하 중지, 인스턴스 크기 검토 | 2차 |
-| 7 | 디스크 풀 | 큰 파일 생성(`fallocate`) | DiskAlmostFull 알림 | `df -h`, `du`로 원인 파일 확인 | 파일 정리, 로그 로테이션 설정 | 2차 |
+| 7 | 디스크 풀 | 큰 파일 생성(`fallocate`) | DiskAlmostFull 알림 | `df -h`, `du`로 원인 파일 확인 | 런북 `cleanup-disk.yml`, 로그 로테이션 설정 | 2차 |
 | 8 | 외부 API 경로 차단 | 웹·앱 SG에서 아웃바운드 443 규칙 삭제 | PriceDataStale 알림, 수집 실패 증가, 외부·내부 체크와 `/health`는 정상 | 서비스는 살아 있음 → 나가는 길 문제 → 아웃바운드 SG 규칙 확인 | `terraform apply`로 복구 | 2차 |
 | 9 | 업비트 요청 제한 초과 | 수집 주기를 아주 짧게, 종목 수를 늘림 | 남은 요청 수 0 근접, 429 응답 증가, CollectorErrors 알림 | 우리 쪽 장애가 아닌 외부 의존성 한도 문제 → 요청량 계산 | 주기·종목 수 조정, 재시도 백오프 추가 | 2차 |
 
@@ -157,13 +196,15 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
    - 아키텍처·SG 규칙 확정, Terraform으로 VPC·서브넷·EC2·SG 생성
    - 앱(시세 수집기 + 조회 웹) 바이브 코딩, 로컬에서 Docker Compose로 실행하고 시세 저장 확인
 2. **2주차 — 배포와 모니터링**
-   - user\_data로 AWS에 앱 배포, 외부 접속 확인
+   - WSL에 Ansible 설치, 플레이북으로 서버 3대 구성(앱 배포 포함), 외부 접속 확인
    - Prometheus·blackbox·Grafana 구성, 대시보드 1개, 알림 2개
 3. **3주차 — 장애 재현과 문서화 (1차 완성)**
    - 시나리오 1·2 재현, 알림 수신과 대시보드 스크린샷
    - README 1차 작성, repo public 전환
 4. **4주차 이후 — 2차 확장**
-   - NACL·Flow Logs, Loki, 나머지 시나리오를 하나씩 추가
+   - NACL·Flow Logs, Loki, Ansible 런북, 나머지 시나리오를 하나씩 추가
+5. **시간이 남으면 — 3차**
+   - 웹훅 → Ansible 장애 자동 해결, 조치 결과 알림 (약 10~15시간)
 
 시작일과 1차 완성 목표일은 아직 정하지 않았다.
 
@@ -188,7 +229,10 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 ├─ terraform/
 │   ├─ modules/ (network, security, compute)
 │   ├─ main.tf, variables.tf, outputs.tf
-│   └─ user_data/
+├─ ansible/
+│   ├─ inventory.ini, site.yml
+│   ├─ roles/ (docker, app, postgresql, node_exporter, monitoring)
+│   └─ runbooks/ (restart-app.yml, restart-db.yml, cleanup-disk.yml)
 ├─ app/ (FastAPI 웹·수집기, Dockerfile, docker-compose.yml, nginx.conf)
 ├─ monitoring/ (prometheus.yml, alert rules, blackbox.yml, alertmanager.yml, grafana 대시보드 JSON)
 ├─ docs/
@@ -212,6 +256,8 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 - 데이터 갱신 지연(마지막 갱신 시각)을 따로 감시해 "서버는 살아 있는데 데이터가 멈춘" 장애까지 잡은 점
 - SG(stateful)와 NACL(stateless)의 차이를 장애로 직접 확인한 경험
 - 수동으로 바꾼 방화벽 규칙을 `terraform apply`로 되돌리며 IaC로 설정 drift를 복구한 경험
+- Terraform(인프라)과 Ansible(서버 구성·장애 조치)의 역할을 나눈 이유, 방화벽 장애는 자동 해결에서 뺀 이유
+- 프로세스 장애는 restart 정책 같은 플랫폼 기능으로 먼저 해결하고, 원인 판단이 필요한 장애는 런북으로 남긴 설계
 - 앱은 AI 도움을 받아 만들었고, 인프라·모니터링·장애 대응은 직접 설계했다고 솔직하게 설명
 
 ## 리스크와 대응
@@ -225,4 +271,6 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 | SG 실수로 내 SSH 접속 끊김 | SSH는 내 IP만 허용하는 별도 규칙 유지, 필요하면 SSM Session Manager 사용 |
 | 업비트 API 요청 제한·장애 | 종목 수·수집 주기를 작게 시작, `Remaining-Req` 모니터링, 업비트 쪽 장애는 내 서비스 장애와 구분해 기록 |
 | 시세 데이터로 DB 용량 증가 | 오래된 시세는 주기적으로 삭제(예: 7일 보존), 디스크 사용률 대시보드 확인 |
+| Ansible을 Windows에서 실행할 수 없음 | WSL(Ubuntu)에 설치해 컨트롤 노드로 사용 |
+| 자동 조치가 장애를 숨기거나 무한 재시작 (3차) | 허용 목록·횟수 제한, 조치 결과를 Discord에 기록 |
 | 키·웹훅 URL 유출 | `.gitignore`에 tfvars·키·`.env` 추가, Discord 웹훅 URL은 변수로 분리 |
