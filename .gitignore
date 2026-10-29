@@ -1,0 +1,19 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+.terraform.lock.hcl.bak
+
+# 키·비밀값
+*.pem
+*.key
+.env
+
+# OS·에디터
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
