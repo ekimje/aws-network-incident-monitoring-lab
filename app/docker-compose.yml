@@ -1,0 +1,29 @@
+# 로컬 실행용: app(FastAPI) + db(PostgreSQL)
+# 같은 폴더의 .env 값을 읽는다 (.env.example을 복사해서 만든다)
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # DB가 접속을 받을 준비가 됐는지 확인한다
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    env_file: .env
+    ports:
+      - "8000:8000"
+    # DB가 준비된 뒤에 앱을 시작한다 (앱 시작 때 테이블을 만들기 때문)
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
