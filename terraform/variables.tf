@@ -32,7 +32,7 @@ resource "aws_vpc" "main" {
     }
 }
 
-data "aws_availabillity_zones" "available" {
+data "aws_availability_zones" "available" {
     state = "available"
 }
 
@@ -47,7 +47,7 @@ resource "aws_subnet" "public_subnet" {
 }
 
 resource "aws_subnet" "private_subnet" {
-    vpc_id = aws_vpc.main
+    vpc_id = aws_vpc.main.id
     cidr_block = var.private_subnet_cidr
     availability_zone = var.az
 
