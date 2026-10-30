@@ -107,6 +107,13 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 ### Terraform
 
 - 모듈 분리: `network`(VPC, 서브넷, 라우팅, NACL), `security`(SG), `compute`(EC2)
+- 네트워크 대역 (리전 `ap-northeast-2`, 가용 영역 `ap-northeast-2a` 하나)
+
+  | 구분 | CIDR | 들어가는 서버 |
+  | --- | --- | --- |
+  | VPC | `10.0.0.0/16` | |
+  | public 서브넷 | `10.0.1.0/24` | 웹·앱, 모니터링 |
+  | private 서브넷 | `10.0.2.0/24` | DB |
 - 내 IP, 인스턴스 타입, 키 이름은 변수로 관리하고 `terraform.tfvars`는 커밋하지 않음
 - EC2 `user_data`는 쓰지 않는다. 서버 안 설치·설정은 Ansible이 맡는다
 - `outputs`로 각 서버 IP 출력 → Ansible 인벤토리에 사용. `terraform apply` + `ansible-playbook` 두 줄로 전체 환경 재현
