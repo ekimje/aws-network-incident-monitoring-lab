@@ -7,6 +7,7 @@
 """
 
 import json
+import logging
 import os
 import threading
 import time
@@ -15,8 +16,16 @@ from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+# 로그를 시간·레벨·이름과 함께 출력한다 (docker compose logs 에 나온다)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("collector")
+
 
 # ---------------------------------------------------------------
 # 설정
@@ -31,7 +40,8 @@ DB_CONNINFO = (
     f"port={os.environ['DB_PORT']} "
     f"dbname={os.environ['DB_NAME']} "
     f"user={os.environ['DB_USER']} "
-    f"password={os.environ['DB_PASSWORD']}"
+    f"password={os.environ['DB_PASSWORD']} "
+    "connect_timeout=3"  # 3초 안에 연결 안 되면 실패로 본다 (방화벽이 패킷을 버리는 경우)
 )
 
 # TODO(메트릭): 여기에 커스텀 메트릭을 정의한다
@@ -93,14 +103,14 @@ def fetch_tickers():
 
 
 def collect_forever():
-    """15초마다 시세를 받아 DB에 저장한다. 백그라운드 스레드에서 계속 돈다."""
+    """15초마다 시세를 받아 DB에 저장한다. 실패해도 멈추지 않고 다음 주기에 다시 시도한다."""
     while True:
-        # TODO(에러 처리): 지금은 업비트 요청이나 DB 저장이 실패하면 예외가 나서
-        #   이 스레드가 멈추고 수집이 끊긴다 (웹 화면과 /health는 계속 정상 응답).
-        #   try/except로 감싸서 실패를 기록하고 다음 주기에 다시 시도하게 바꾼다.
+        try:
+            tickers = fetch_tickers()
+            save_prices(tickers)
+        except Exception:
+            logger.exception("수집 실패")
         # TODO(메트릭): 수집 성공·실패 수, 응답시간, 마지막 갱신 시각을 여기서 기록
-        tickers = fetch_tickers()
-        save_prices(tickers)
         time.sleep(COLLECT_INTERVAL_SECONDS)
 
 
@@ -142,8 +152,14 @@ def index():
 
 @app.get("/health")
 def health():
-    # TODO(헬스체크): DB에 SELECT 1을 날려서 실패하면 503을 반환하도록 바꾼다
-    return {"status": "ok"}
+    """DB에 연결할 수 있으면 200, 없으면 503을 돌려준다."""
+    try:
+        with psycopg.connect(DB_CONNINFO, connect_timeout=2) as conn:
+            conn.execute("SELECT 1")
+    except psycopg.Error:
+        logger.warning("헬스체크: DB 연결 실패")
+        return JSONResponse(status_code=503, content={"status": "error", "db": "unreachable"})
+    return {"status": "ok", "db": "ok"}
 
 
 @app.get("/metrics")
