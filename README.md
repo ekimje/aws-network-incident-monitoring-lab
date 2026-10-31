@@ -81,7 +81,26 @@ flowchart LR
 | 모니터링 SG | 3000 | 내 IP | Grafana 접속 |
 | 모니터링 SG | 22 | 내 IP | SSH 관리 |
 
-아웃바운드는 SG 기본값(전체 허용)을 쓰지 않고 Terraform에 명시한다. 웹·앱 SG는 업비트 API 호출용 443, DB 접속용 5432를 열고, 웹·앱 서버는 public 서브넷에 있어서 NAT 없이 인터넷으로 나간다.
+**SG 규칙 (아웃바운드)**
+
+아웃바운드는 SG 기본값(전체 허용)을 쓰지 않고 Terraform에 명시한다. Terraform으로 SG를 만들면 기본 아웃바운드 규칙이 지워지므로, 필요한 규칙은 모두 직접 적는다.
+
+| SG | 포트 | 목적지 | 용도 |
+| --- | --- | --- | --- |
+| 웹·앱 SG | 443 | 0.0.0.0/0 | 업비트 API, Docker 이미지 pull, apt |
+| 웹·앱 SG | 80 | 0.0.0.0/0 | apt (Ubuntu 미러) |
+| 웹·앱 SG | 5432 | DB SG | 앱의 DB 접속 |
+| 웹·앱 SG | 22 | DB SG | 점프 호스트 경유 SSH (Ansible ProxyJump) |
+| DB SG | 443 | 0.0.0.0/0 | apt, Docker 이미지 pull (NAT를 켤 때만) |
+| DB SG | 80 | 0.0.0.0/0 | apt (NAT를 켤 때만) |
+| 모니터링 SG | 80, 8000, 9100 | 웹·앱 SG | 내부 체크, 앱 메트릭, node\_exporter |
+| 모니터링 SG | 5432, 9100 | DB SG | DB 체크, node\_exporter |
+| 모니터링 SG | 80 | 0.0.0.0/0 | 외부 HTTP 체크(웹 서버 공인 IP), apt |
+| 모니터링 SG | 443 | 0.0.0.0/0 | Discord 웹훅, Docker 이미지 pull, apt |
+
+- 웹·앱·모니터링 서버는 public 서브넷에 있어서 NAT 없이 인터넷으로 나간다. DB 서버는 private 서브넷이라 패키지를 설치할 때만 `enable_nat = true`로 NAT를 켠다
+- SG는 stateful이라 인바운드로 허용한 요청의 응답은 아웃바운드 규칙 없이 나간다
+- VPC DNS(Amazon 제공 DNS)와 시간 동기화(NTP) 트래픽은 SG가 걸러내지 않아서 규칙이 필요 없다
 
 Ansible은 내 IP에서 SSH(22)로 웹·앱·모니터링 서버에 접속하고, private 서브넷의 DB 서버에는 웹·앱 서버를 점프 호스트로 거쳐 들어간다(ProxyJump). 위 SG 규칙만으로 충분하다. 3차 자동 해결을 넣을 때만 "모니터링 SG → 웹·앱·DB SG 22" 규칙을 추가한다.
 

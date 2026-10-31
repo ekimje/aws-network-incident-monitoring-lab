@@ -7,3 +7,10 @@ module "network" {
   az                  = var.az
   enable_nat          = var.enable_nat
 }
+
+module "security" {
+  source = "./modules/security"
+
+  vpc_id = module.network.vpc_id
+  my_ip  = var.my_ip
+}

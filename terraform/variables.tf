@@ -26,3 +26,8 @@ variable "enable_nat" {
   type    = bool
   default = false
 }
+
+variable "my_ip" {
+  description = "ssh - grafana 접속을 허용할 IP"
+  type        = string
+}
