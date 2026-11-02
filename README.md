@@ -17,10 +17,10 @@ AWS에 **실시간 시세 수집·조회 서비스**를 3계층(웹·앱, DB, �
 
 **1차 최소 완성본**
 
-- [ ] Terraform으로 VPC, 서브넷 2개(public/private), EC2 3대, 계층별 SG 구성
-- [ ] Ansible 플레이북으로 서버 3대 구성 (Docker, 앱, PostgreSQL, node\_exporter, 모니터링 스택)
+- [x] Terraform으로 VPC, 서브넷 2개(public/private), EC2 3대, 계층별 SG 구성
+- [ ] Ansible 플레이북으로 서버 3대 구성 (Docker, 앱, PostgreSQL, node_exporter, 모니터링 스택)
 - [ ] 앱(시세 수집기 + 조회 웹) 배포 후 시세 저장, `/health`, `/metrics` 동작 확인
-- [ ] Prometheus + node\_exporter + blackbox\_exporter + Grafana 대시보드 1개
+- [ ] Prometheus + node_exporter + blackbox_exporter + Grafana 대시보드 1개
 - [ ] Alertmanager 알림 2개 이상 (서비스 다운, 5xx 증가, 시세 갱신 중단)
 - [ ] 장애 시나리오 2개(웹 SG 차단, 앱→DB 차단) 재현, 스크린샷, README 정리
 
@@ -70,33 +70,33 @@ flowchart LR
 
 **SG 규칙 (인바운드)**
 
-| SG | 포트 | 출처 | 용도 |
-| --- | --- | --- | --- |
-| 웹·앱 SG | 80 | 0.0.0.0/0 | 사용자·외부 체크 |
-| 웹·앱 SG | 80, 8000, 9100 | 모니터링 SG | 내부 체크, 앱 메트릭, node\_exporter |
-| 웹·앱 SG | 22 | 내 IP | SSH 관리 |
-| DB SG | 5432 | 웹·앱 SG | 앱의 DB 접속 |
-| DB SG | 5432, 9100 | 모니터링 SG | DB 체크, node\_exporter |
-| DB SG | 22 | 웹·앱 SG | 점프 호스트 경유 SSH |
-| 모니터링 SG | 3000 | 내 IP | Grafana 접속 |
-| 모니터링 SG | 22 | 내 IP | SSH 관리 |
+| SG          | 포트           | 출처        | 용도                                |
+| ----------- | -------------- | ----------- | ----------------------------------- |
+| 웹·앱 SG    | 80             | 0.0.0.0/0   | 사용자·외부 체크                    |
+| 웹·앱 SG    | 80, 8000, 9100 | 모니터링 SG | 내부 체크, 앱 메트릭, node_exporter |
+| 웹·앱 SG    | 22             | 내 IP       | SSH 관리                            |
+| DB SG       | 5432           | 웹·앱 SG    | 앱의 DB 접속                        |
+| DB SG       | 5432, 9100     | 모니터링 SG | DB 체크, node_exporter              |
+| DB SG       | 22             | 웹·앱 SG    | 점프 호스트 경유 SSH                |
+| 모니터링 SG | 3000           | 내 IP       | Grafana 접속                        |
+| 모니터링 SG | 22             | 내 IP       | SSH 관리                            |
 
 **SG 규칙 (아웃바운드)**
 
 아웃바운드는 SG 기본값(전체 허용)을 쓰지 않고 Terraform에 명시한다. Terraform으로 SG를 만들면 기본 아웃바운드 규칙이 지워지므로, 필요한 규칙은 모두 직접 적는다.
 
-| SG | 포트 | 목적지 | 용도 |
-| --- | --- | --- | --- |
-| 웹·앱 SG | 443 | 0.0.0.0/0 | 업비트 API, Docker 이미지 pull, apt |
-| 웹·앱 SG | 80 | 0.0.0.0/0 | apt (Ubuntu 미러) |
-| 웹·앱 SG | 5432 | DB SG | 앱의 DB 접속 |
-| 웹·앱 SG | 22 | DB SG | 점프 호스트 경유 SSH (Ansible ProxyJump) |
-| DB SG | 443 | 0.0.0.0/0 | apt, Docker 이미지 pull (NAT를 켤 때만) |
-| DB SG | 80 | 0.0.0.0/0 | apt (NAT를 켤 때만) |
-| 모니터링 SG | 80, 8000, 9100 | 웹·앱 SG | 내부 체크, 앱 메트릭, node\_exporter |
-| 모니터링 SG | 5432, 9100 | DB SG | DB 체크, node\_exporter |
-| 모니터링 SG | 80 | 0.0.0.0/0 | 외부 HTTP 체크(웹 서버 공인 IP), apt |
-| 모니터링 SG | 443 | 0.0.0.0/0 | Discord 웹훅, Docker 이미지 pull, apt |
+| SG          | 포트           | 목적지    | 용도                                     |
+| ----------- | -------------- | --------- | ---------------------------------------- |
+| 웹·앱 SG    | 443            | 0.0.0.0/0 | 업비트 API, Docker 이미지 pull, apt      |
+| 웹·앱 SG    | 80             | 0.0.0.0/0 | apt (Ubuntu 미러)                        |
+| 웹·앱 SG    | 5432           | DB SG     | 앱의 DB 접속                             |
+| 웹·앱 SG    | 22             | DB SG     | 점프 호스트 경유 SSH (Ansible ProxyJump) |
+| DB SG       | 443            | 0.0.0.0/0 | apt, Docker 이미지 pull (NAT를 켤 때만)  |
+| DB SG       | 80             | 0.0.0.0/0 | apt (NAT를 켤 때만)                      |
+| 모니터링 SG | 80, 8000, 9100 | 웹·앱 SG  | 내부 체크, 앱 메트릭, node_exporter      |
+| 모니터링 SG | 5432, 9100     | DB SG     | DB 체크, node_exporter                   |
+| 모니터링 SG | 80             | 0.0.0.0/0 | 외부 HTTP 체크(웹 서버 공인 IP), apt     |
+| 모니터링 SG | 443            | 0.0.0.0/0 | Discord 웹훅, Docker 이미지 pull, apt    |
 
 - 웹·앱·모니터링 서버는 public 서브넷에 있어서 NAT 없이 인터넷으로 나간다. DB 서버는 private 서브넷이라 패키지를 설치할 때만 `enable_nat = true`로 NAT를 켠다
 - SG는 stateful이라 인바운드로 허용한 요청의 응답은 아웃바운드 규칙 없이 나간다
@@ -108,18 +108,18 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 
 ## 기술 스택
 
-| 영역 | 사용 기술 | 비고 |
-| --- | --- | --- |
-| IaC | Terraform (AWS provider) | 기존 코드 복습, 모듈로 재구성 |
-| 클라우드 | AWS VPC, EC2, Security Group, NACL | Flow Logs는 2차 |
-| 앱 | Python FastAPI, PostgreSQL | 바이브 코딩, 코드 이해 정리 필수 |
-| 데이터 소스 | 업비트 Quotation API | 키 불필요, 주식 API는 2차 아이디어 |
-| 배포 | Docker, Docker Compose, Nginx | 컨테이너 `restart: unless-stopped` |
-| 구성 관리 | Ansible | 서버 설치·설정, 런북. Windows에서는 WSL(Ubuntu)에서 실행 |
-| 모니터링 | Prometheus, node\_exporter, blackbox\_exporter, Grafana | 모니터링 전용 EC2 |
-| 알림 | Alertmanager → Discord 웹훅 | Slack이나 이메일도 가능 |
-| 로그 (2차) | Loki, Promtail | 메모리 여유 보고 결정 |
-| 테스트 | curl, k6 | 부하 테스트는 2차 |
+| 영역        | 사용 기술                                             | 비고                                                     |
+| ----------- | ----------------------------------------------------- | -------------------------------------------------------- |
+| IaC         | Terraform (AWS provider)                              | 기존 코드 복습, 모듈로 재구성                            |
+| 클라우드    | AWS VPC, EC2, Security Group, NACL                    | Flow Logs는 2차                                          |
+| 앱          | Python FastAPI, PostgreSQL                            | 바이브 코딩, 코드 이해 정리 필수                         |
+| 데이터 소스 | 업비트 Quotation API                                  | 키 불필요, 주식 API는 2차 아이디어                       |
+| 배포        | Docker, Docker Compose, Nginx                         | 컨테이너 `restart: unless-stopped`                       |
+| 구성 관리   | Ansible                                               | 서버 설치·설정, 런북. Windows에서는 WSL(Ubuntu)에서 실행 |
+| 모니터링    | Prometheus, node_exporter, blackbox_exporter, Grafana | 모니터링 전용 EC2                                        |
+| 알림        | Alertmanager → Discord 웹훅                           | Slack이나 이메일도 가능                                  |
+| 로그 (2차)  | Loki, Promtail                                        | 메모리 여유 보고 결정                                    |
+| 테스트      | curl, k6                                              | 부하 테스트는 2차                                        |
 
 ## 구성 요소별 상세
 
@@ -128,11 +128,12 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 - 모듈 분리: `network`(VPC, 서브넷, 라우팅, NACL), `security`(SG), `compute`(EC2)
 - 네트워크 대역 (리전 `ap-northeast-2`, 가용 영역 `ap-northeast-2a` 하나)
 
-  | 구분 | CIDR | 들어가는 서버 |
-  | --- | --- | --- |
-  | VPC | `10.0.0.0/16` | |
-  | public 서브넷 | `10.0.1.0/24` | 웹·앱, 모니터링 |
-  | private 서브넷 | `10.0.2.0/24` | DB |
+  | 구분           | CIDR          | 들어가는 서버   |
+  | -------------- | ------------- | --------------- |
+  | VPC            | `10.0.0.0/16` |                 |
+  | public 서브넷  | `10.0.1.0/24` | 웹·앱, 모니터링 |
+  | private 서브넷 | `10.0.2.0/24` | DB              |
+
 - 내 IP, 인스턴스 타입, 키 이름은 변수로 관리하고 `terraform.tfvars`는 커밋하지 않음
 - EC2 `user_data`는 쓰지 않는다. 서버 안 설치·설정은 Ansible이 맡는다
 - `outputs`로 각 서버 IP 출력 → Ansible 인벤토리에 사용. `terraform apply` + `ansible-playbook` 두 줄로 전체 환경 재현
@@ -145,6 +146,81 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 - **멱등성**: 여러 번 실행해도 결과가 같게 작성한다. 설치가 중간에 실패하면 서버를 다시 만들지 않고 플레이북만 다시 실행한다
 - **런북 플레이북 (2차)**: `restart-app.yml`, `restart-db.yml`, `cleanup-disk.yml`. 알림 메시지(`annotations.runbook`)에 실행할 플레이북 이름을 적어 둔다
 - **기본 자동 복구**: 프로세스가 죽는 장애는 Docker `restart: unless-stopped`가 먼저 처리한다. Ansible은 그걸로 안 되는 경우를 맡는다
+
+### SSH 접속
+
+사용자는 Ubuntu AMI 기본 계정 `ubuntu`, 키는 `terraform.tfvars`의 `key_name`과 짝인 `.pem` 파일이다. IP는 `terraform apply` 뒤 `terraform output`으로 확인한다.
+
+- **웹·앱, 모니터링 서버**: 퍼블릭 IP로 바로 접속한다
+- **DB 서버**: 퍼블릭 IP가 없으므로 웹·앱 서버를 거쳐 프라이빗 IP로 접속한다. 내 PC의 키로 두 단계를 모두 인증하고, 경유지인 웹·앱 서버에는 개인 키를 복사하지 않는다 (웹 서버가 뚫리면 DB까지 들어갈 수 있게 되므로)
+
+**WSL (bash)**
+
+```bash
+# 키 파일 권한 (처음 한 번). /mnt/c 아래에서는 권한이 적용되지 않으므로 WSL 홈에 둔다
+chmod 400 ~/.ssh/<key>.pem
+
+# 웹·앱, 모니터링 서버
+ssh -i ~/.ssh/<key>.pem ubuntu@<web_public_ip>
+ssh -i ~/.ssh/<key>.pem ubuntu@<monitoring_public_ip>
+
+# DB 서버 (ProxyJump). -i 키는 최종 목적지에만 쓰이므로 ssh-agent에 키를 먼저 등록한다
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/<key>.pem
+ssh -J ubuntu@<web_public_ip> ubuntu@<db_private_ip>
+```
+
+**Windows (cmd, PowerShell)**
+
+터미널마다 홈 폴더를 쓰는 법이 다르다. 프롬프트 모양으로 지금 터미널을 구분한다. DB 서버는 Windows에서 ssh-agent 서비스를 켜려면 관리자 권한이 필요하므로, 경유지에도 키를 직접 주는 `ProxyCommand`를 쓴다.
+
+| 터미널         | 프롬프트 모양  | 홈 폴더                     |
+| -------------- | -------------- | --------------------------- |
+| cmd            | `C:\...>`      | `%USERPROFILE%`             |
+| PowerShell     | `PS C:\...>`   | `$env:USERPROFILE` 또는 `~` |
+| WSL / Git Bash | `user@host:~$` | `~` 또는 `$HOME`            |
+
+```cmd
+:: cmd
+ssh -i "%USERPROFILE%\.ssh\<key>.pem" ubuntu@<web_public_ip>
+ssh -i "%USERPROFILE%\.ssh\<key>.pem" -o ProxyCommand="ssh -i %USERPROFILE%\.ssh\<key>.pem -W %h:%p ubuntu@<web_public_ip>" ubuntu@<db_private_ip>
+```
+
+```powershell
+# PowerShell
+ssh -i "$env:USERPROFILE\.ssh\<key>.pem" ubuntu@<web_public_ip>
+ssh -i "$env:USERPROFILE\.ssh\<key>.pem" -o ProxyCommand="ssh -i $env:USERPROFILE\.ssh\<key>.pem -W %h:%p ubuntu@<web_public_ip>" ubuntu@<db_private_ip>
+```
+
+**별칭으로 줄이기 (`~/.ssh/config`)**
+
+서버별 설정을 적어 두면 `ssh lab-web`, `ssh lab-db`만으로 접속한다. config에서는 경유지도 자기 `IdentityFile`을 쓰므로 ssh-agent 없이 `ProxyJump`가 동작한다. `destroy` 후 다시 `apply`하면 `HostName`을 새 IP로 고친다.
+
+```
+Host lab-web
+    HostName <web_public_ip>
+    User ubuntu
+    IdentityFile ~/.ssh/<key>.pem
+
+Host lab-monitoring
+    HostName <monitoring_public_ip>
+    User ubuntu
+    IdentityFile ~/.ssh/<key>.pem
+
+Host lab-db
+    HostName <db_private_ip>
+    User ubuntu
+    IdentityFile ~/.ssh/<key>.pem
+    ProxyJump lab-web
+```
+
+**문제 해결**
+
+- `Permission denied (publickey)`: 서버까지는 도달했지만 키가 맞지 않는다. 사용자 이름(`ubuntu`)과 키 페어 짝을 확인한다. AWS가 만든 RSA 키는 `openssl pkcs8 -in <key>.pem -inform PEM -outform DER -topk8 -nocrypt | openssl sha1 -c` 결과가 콘솔의 키 페어 지문과 같아야 한다
+- `Identity file ... not accessible` 또는 `Load key ...: Operation not supported`: 키 경로가 잘못됐다. cmd에서 `$env:USERPROFILE`을 쓰면 경로로 바뀌지 않고 글자 그대로 남는다. `-i`에 폴더가 아니라 `.pem` 파일 경로까지 넣었는지도 확인한다
+- `UNPROTECTED PRIVATE KEY FILE` (Windows): `icacls <key>.pem /inheritance:r` 후 `icacls <key>.pem /grant:r "%USERNAME%:(R)"`로 내 계정만 읽게 한다
+- 연결 시간 초과: SG 22번 출처가 지금 내 IP인지 확인한다 (`curl https://checkip.amazonaws.com`)
+- `destroy` 후 다시 `apply`하면 퍼블릭 IP가 바뀐다
 
 ### 앱 (실시간 시세 수집·조회 서비스)
 
@@ -160,20 +236,21 @@ NACL은 처음에는 기본값(전체 허용)으로 두고, 2차 시나리오에
 
 ### 모니터링
 
-- Prometheus 수집 대상: node\_exporter(3대), 앱 `/metrics`, blackbox\_exporter
+- Prometheus 수집 대상: node_exporter(3대), 앱 `/metrics`, blackbox_exporter
 - blackbox 체크 3종: 외부 HTTP(웹 서버 퍼블릭 IP), 내부 HTTP(웹 서버 사설 IP), DB TCP 5432
 - Grafana 대시보드 패널: 외부·내부·DB 체크 성공 여부, 5xx 비율, p95 응답시간, 수집 성공률, 마지막 갱신 후 경과 시간, 업비트 API 응답시간, CPU·메모리·디스크
 
 ### 알림 규칙
 
-| 알림 | 조건 | 의미 |
-| --- | --- | --- |
-| ServiceDownExternal | 외부 HTTP 체크 실패 1분 지속 | 사용자 입장에서 접속 불가 |
-| ServiceDownInternal | 내부 HTTP 체크 실패 1분 지속 | 앱이나 서버 자체 문제 |
-| DBUnreachable | DB TCP 체크 실패 1분 지속 | DB 서버나 DB 포트 문제 |
-| High5xxRate | 5xx 비율 5% 이상 2분 지속 | 앱 내부 오류, DB 연결 실패 등 |
-| PriceDataStale | 마지막 갱신 후 1분 이상 지남 | 수집 중단 (외부 API 경로, 업비트 장애, DB 저장 실패 등) |
-| CollectorErrors (2차) | 수집 실패율 50% 이상 2분 지속 | 업비트 API 오류·요청 제한 초과 |
+| 알림                  | 조건                          | 의미                                                    |
+| --------------------- | ----------------------------- | ------------------------------------------------------- |
+| ServiceDownExternal   | 외부 HTTP 체크 실패 1분 지속  | 사용자 입장에서 접속 불가                               |
+| ServiceDownInternal   | 내부 HTTP 체크 실패 1분 지속  | 앱이나 서버 자체 문제                                   |
+| DBUnreachable         | DB TCP 체크 실패 1분 지속     | DB 서버나 DB 포트 문제                                  |
+| High5xxRate           | 5xx 비율 5% 이상 2분 지속     | 앱 내부 오류, DB 연결 실패 등                           |
+| PriceDataStale        | 마지막 갱신 후 1분 이상 지남  | 수집 중단 (외부 API 경로, 업비트 장애, DB 저장 실패 등) |
+| CollectorErrors (2차) | 수집 실패율 50% 이상 2분 지속 | 업비트 API 오류·요청 제한 초과                          |
+| DiskAlmostFull (2차)  | 디스크 사용률 90% 이상        | 디스크 풀 위험                                          |
 
 Alertmanager는 `send_resolved: true`로 두어 장애가 풀리면 해결 알림도 Discord로 보낸다.
 
@@ -192,7 +269,6 @@ flowchart LR
 - **제외**: SG·NACL 장애. 원인 판단이 프로젝트의 핵심이고, 방화벽은 Terraform이 관리하는 영역이라 Ansible로 고치면 drift가 생긴다
 - **안전장치**: 허용 목록(알림 이름), 같은 알림은 10분에 1번만 실행, 조치 후에도 안 풀리면 사람에게 넘김
 - **필요한 변경**: 모니터링 서버에 Ansible 설치, 모니터링 SG → 웹·앱·DB SG 22 규칙 추가
-| DiskAlmostFull (2차) | 디스크 사용률 90% 이상 | 디스크 풀 위험 |
 
 ### VPC Flow Logs (2차)
 
@@ -202,17 +278,17 @@ flowchart LR
 
 1차는 1·2번만 완성하고, 시나리오마다 "발생 → 감지 → 원인 확인 → 복구 → 재발 방지"를 스크린샷과 함께 README에 남긴다.
 
-| # | 시나리오 | 발생 방법 | 감지 신호 | 원인 확인 | 복구 | 단계 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | 웹 SG 80포트 차단 | 웹 SG에서 0.0.0.0/0 인바운드 80 규칙 삭제 | 외부 체크 실패, 내부 체크 정상 | 앱은 정상 → 외부 경로 문제 → SG 규칙 확인 | `terraform apply`로 원래 규칙 복구 (drift 확인) | 1차 |
-| 2 | 앱→DB 경로 차단 | DB SG에서 앱 SG 출처의 5432 규칙 삭제 | `/health` 503, 5xx 급증, 시세 갱신 중단, DB TCP 체크는 정상 | DB는 살아 있음 → 앱↔DB 사이 방화벽 문제 | `terraform apply`로 복구 | 1차 |
-| 3 | 앱 프로세스 강제 종료 | `docker compose exec app kill 1` | 외부·내부 체크가 잠깐 실패 후 회복, node\_exporter 정상 | `docker ps`의 STATUS(Up 몇 초), 로그로 재시작 흔적 확인 | restart 정책으로 자동 복구 확인, 반복되면 런북 `restart-app.yml` | 2차 |
-| 4 | DB 중지 | DB 서비스 중지 | DB TCP 체크 실패, `/health` 503 | DB 서버 접속 후 서비스 상태 확인 | 런북 `restart-db.yml` | 2차 |
-| 5 | NACL 아웃바운드 차단 | public 서브넷 NACL에서 아웃바운드 1024\~65535 거부 | 외부 체크 실패, SG는 정상 | SG만 봐서는 안 보임 → NACL이 stateless라 응답이 막힘 → Flow Logs `REJECT` | NACL 규칙 복구 | 2차 |
-| 6 | 부하 증가 | k6로 동시 요청 | p95 응답시간·CPU 상승 | 대시보드에서 자원 사용률 확인 | 부하 중지, 인스턴스 크기 검토 | 2차 |
-| 7 | 디스크 풀 | 큰 파일 생성(`fallocate`) | DiskAlmostFull 알림 | `df -h`, `du`로 원인 파일 확인 | 런북 `cleanup-disk.yml`, 로그 로테이션 설정 | 2차 |
-| 8 | 외부 API 경로 차단 | 웹·앱 SG에서 아웃바운드 443 규칙 삭제 | PriceDataStale 알림, 수집 실패 증가, 외부·내부 체크와 `/health`는 정상 | 서비스는 살아 있음 → 나가는 길 문제 → 아웃바운드 SG 규칙 확인 | `terraform apply`로 복구 | 2차 |
-| 9 | 업비트 요청 제한 초과 | 수집 주기를 아주 짧게, 종목 수를 늘림 | 남은 요청 수 0 근접, 429 응답 증가, CollectorErrors 알림 | 우리 쪽 장애가 아닌 외부 의존성 한도 문제 → 요청량 계산 | 주기·종목 수 조정, 재시도 백오프 추가 | 2차 |
+| #   | 시나리오              | 발생 방법                                          | 감지 신호                                                              | 원인 확인                                                                 | 복구                                                             | 단계 |
+| --- | --------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---- |
+| 1   | 웹 SG 80포트 차단     | 웹 SG에서 0.0.0.0/0 인바운드 80 규칙 삭제          | 외부 체크 실패, 내부 체크 정상                                         | 앱은 정상 → 외부 경로 문제 → SG 규칙 확인                                 | `terraform apply`로 원래 규칙 복구 (drift 확인)                  | 1차  |
+| 2   | 앱→DB 경로 차단       | DB SG에서 앱 SG 출처의 5432 규칙 삭제              | `/health` 503, 5xx 급증, 시세 갱신 중단, DB TCP 체크는 정상            | DB는 살아 있음 → 앱↔DB 사이 방화벽 문제                                   | `terraform apply`로 복구                                         | 1차  |
+| 3   | 앱 프로세스 강제 종료 | `docker compose exec app kill 1`                   | 외부·내부 체크가 잠깐 실패 후 회복, node_exporter 정상                 | `docker ps`의 STATUS(Up 몇 초), 로그로 재시작 흔적 확인                   | restart 정책으로 자동 복구 확인, 반복되면 런북 `restart-app.yml` | 2차  |
+| 4   | DB 중지               | DB 서비스 중지                                     | DB TCP 체크 실패, `/health` 503                                        | DB 서버 접속 후 서비스 상태 확인                                          | 런북 `restart-db.yml`                                            | 2차  |
+| 5   | NACL 아웃바운드 차단  | public 서브넷 NACL에서 아웃바운드 1024\~65535 거부 | 외부 체크 실패, SG는 정상                                              | SG만 봐서는 안 보임 → NACL이 stateless라 응답이 막힘 → Flow Logs `REJECT` | NACL 규칙 복구                                                   | 2차  |
+| 6   | 부하 증가             | k6로 동시 요청                                     | p95 응답시간·CPU 상승                                                  | 대시보드에서 자원 사용률 확인                                             | 부하 중지, 인스턴스 크기 검토                                    | 2차  |
+| 7   | 디스크 풀             | 큰 파일 생성(`fallocate`)                          | DiskAlmostFull 알림                                                    | `df -h`, `du`로 원인 파일 확인                                            | 런북 `cleanup-disk.yml`, 로그 로테이션 설정                      | 2차  |
+| 8   | 외부 API 경로 차단    | 웹·앱 SG에서 아웃바운드 443 규칙 삭제              | PriceDataStale 알림, 수집 실패 증가, 외부·내부 체크와 `/health`는 정상 | 서비스는 살아 있음 → 나가는 길 문제 → 아웃바운드 SG 규칙 확인             | `terraform apply`로 복구                                         | 2차  |
+| 9   | 업비트 요청 제한 초과 | 수집 주기를 아주 짧게, 종목 수를 늘림              | 남은 요청 수 0 근접, 429 응답 증가, CollectorErrors 알림               | 우리 쪽 장애가 아닌 외부 의존성 한도 문제 → 요청량 계산                   | 주기·종목 수 조정, 재시도 백오프 추가                            | 2차  |
 
 ## 단계별 일정
 
@@ -288,15 +364,15 @@ flowchart LR
 
 ## 리스크와 대응
 
-| 리스크 | 대응 |
-| --- | --- |
-| 평일 수업으로 일정 지연 | 1차 범위만 먼저 끝내고 2차는 하나씩 추가 |
-| 바이브 코딩 코드를 설명 못 함 | 앱 기능을 최소로 유지, 파일별 역할과 핵심 코드를 직접 주석·정리 |
-| AWS 비용 초과 | 작업 후 destroy, NAT Gateway 미사용, Budgets 알림 |
-| 모니터링 서버 메모리 부족 | t3.small 사용, 부족하면 Loki 제외 |
-| SG 실수로 내 SSH 접속 끊김 | SSH는 내 IP만 허용하는 별도 규칙 유지, 필요하면 SSM Session Manager 사용 |
-| 업비트 API 요청 제한·장애 | 종목 수·수집 주기를 작게 시작, `Remaining-Req` 모니터링, 업비트 쪽 장애는 내 서비스 장애와 구분해 기록 |
-| 시세 데이터로 DB 용량 증가 | 오래된 시세는 주기적으로 삭제(예: 7일 보존), 디스크 사용률 대시보드 확인 |
-| Ansible을 Windows에서 실행할 수 없음 | WSL(Ubuntu)에 설치해 컨트롤 노드로 사용 |
-| 자동 조치가 장애를 숨기거나 무한 재시작 (3차) | 허용 목록·횟수 제한, 조치 결과를 Discord에 기록 |
-| 키·웹훅 URL 유출 | `.gitignore`에 tfvars·키·`.env` 추가, Discord 웹훅 URL은 변수로 분리 |
+| 리스크                                        | 대응                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 평일 수업으로 일정 지연                       | 1차 범위만 먼저 끝내고 2차는 하나씩 추가                                                               |
+| 바이브 코딩 코드를 설명 못 함                 | 앱 기능을 최소로 유지, 파일별 역할과 핵심 코드를 직접 주석·정리                                        |
+| AWS 비용 초과                                 | 작업 후 destroy, NAT Gateway 미사용, Budgets 알림                                                      |
+| 모니터링 서버 메모리 부족                     | t3.small 사용, 부족하면 Loki 제외                                                                      |
+| SG 실수로 내 SSH 접속 끊김                    | SSH는 내 IP만 허용하는 별도 규칙 유지, 필요하면 SSM Session Manager 사용                               |
+| 업비트 API 요청 제한·장애                     | 종목 수·수집 주기를 작게 시작, `Remaining-Req` 모니터링, 업비트 쪽 장애는 내 서비스 장애와 구분해 기록 |
+| 시세 데이터로 DB 용량 증가                    | 오래된 시세는 주기적으로 삭제(예: 7일 보존), 디스크 사용률 대시보드 확인                               |
+| Ansible을 Windows에서 실행할 수 없음          | WSL(Ubuntu)에 설치해 컨트롤 노드로 사용                                                                |
+| 자동 조치가 장애를 숨기거나 무한 재시작 (3차) | 허용 목록·횟수 제한, 조치 결과를 Discord에 기록                                                        |
+| 키·웹훅 URL 유출                              | `.gitignore`에 tfvars·키·`.env` 추가, Discord 웹훅 URL은 변수로 분리                                   |
