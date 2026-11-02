@@ -31,3 +31,7 @@ variable "my_ip" {
   description = "ssh - grafana 접속을 허용할 IP"
   type        = string
 }
+
+variable "key_name" {
+  type = string
+}
