@@ -155,13 +155,15 @@ Docker가 없는 환경이라, pip로 설치하는 임시 PostgreSQL(`pgserver`)
 
 ### 4.3 실행 화면
 
-같은 환경(수집 주기 5초)에서 정상 수집 → 외부 API 장애 → 복구 순서로 캡처했다.
+로컬 실행 환경(수집 주기 5~10초)에서 정상 수집 → 외부 API 장애 → 복구 흐름을 캡처했다. 프론트 화면은 카드·꺾은선 그래프·상태 배너로 다시 만든 뒤 찍은 것이다.
 
 **정상 수집**
 
-| 프론트 (`/`) | `GET /api/v1/prices` |
-| --- | --- |
-| ![정상 상태 프론트](images/app-run/01-page-ok.jpg) | ![시세 목록 응답](images/app-run/02-api-prices.jpg) |
+![정상 상태 프론트](images/app-run/01-page-ok.png)
+
+`GET /api/v1/prices`: 화면이 읽어 오는 데이터. 가격은 문자열, 시각은 UTC(`Z`)다.
+
+![시세 목록 응답](images/app-run/02-api-prices.jpg)
 
 | `GET /api/v1/collector/status` | `GET /api/v1/prices/KRW-NOPE` (404) |
 | --- | --- |
@@ -173,17 +175,25 @@ Docker가 없는 환경이라, pip로 설치하는 임시 PostgreSQL(`pgserver`)
 
 **외부 API 장애 재현** (`UPBIT_TICKER_PATH=/v1/ticker-wrong`, 1분 경과)
 
-조회는 계속 200으로 응답하고, 화면은 마지막 시세를 회색으로 보여 주며 "데이터가 오래됐습니다"를 표시한다. 상태 API에는 실패 사유 `http_error`와 응답 코드 404가 남는다.
+조회는 계속 200으로 응답한다. 화면 상단 배너가 빨간색으로 바뀌어 실패 사유(`http_error 404`), 마지막 성공 후 경과 시간, 최근 10분 실패 횟수를 보여 주고, 카드는 흐려진다. 같은 정보가 상태 API에도 남는다.
 
-| 프론트 (`/`) | `GET /api/v1/collector/status` |
-| --- | --- |
-| ![FAILED 프론트](images/app-run/06-page-failed.png) | ![FAILED 상태 응답](images/app-run/07-api-collector-status-failed.png) |
+![FAILED 프론트](images/app-run/06-page-failed.png)
+
+![FAILED 상태 응답](images/app-run/07-api-collector-status-failed.png)
 
 **복구** (정상 설정으로 재시작)
 
-| 재시작 직후: RECOVERED | 3번 연속 성공 뒤: OK |
-| --- | --- |
-| ![RECOVERED](images/app-run/08-page-recovered.png) | ![OK](images/app-run/09-page-ok-again.png) |
+재시작 직후에는 RECOVERED(파랑)로 최근 실패 정보를 남겨 두고, 3번 연속 성공하면 OK(초록)로 돌아간다.
+
+![RECOVERED](images/app-run/08-page-recovered.png)
+
+![OK](images/app-run/09-page-ok-again.png)
+
+**다크 모드** (운영체제 설정을 따름)
+
+![다크 모드](images/app-run/10-page-dark.png)
+
+프론트는 ALB가 `/`와 `/api/*`만 앱으로 보내는 제약 때문에 CSS·JS·그래프를 모두 `static/index.html` 한 파일에 넣었다. 꺾은선은 외부 라이브러리 없이 SVG로 그리며, 처음 열 때만 history API로 최근 60개 시세를 받고 이후에는 새 시세를 이어 붙인다. 그래프 색은 최근 약 10분의 흐름, ▲▼ 색은 전일 대비 기준이라 서로 다를 수 있다.
 
 ### 4.4 검증하지 못한 것
 
