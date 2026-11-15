@@ -4,84 +4,364 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>실시간 시세</title>
-  <!-- ALB는 / 와 /api/* 만 앱으로 보내므로, CSS·JS는 파일로 나누지 않고 이 안에 둔다 -->
+  <!--
+    ALB는 / 와 /api/* 만 앱으로 보내므로 CSS·JS를 파일로 나누지 않고 이 안에 둔다.
+    외부 라이브러리도 쓰지 않는다 (그래프는 SVG로 직접 그린다).
+
+    화면 구성
+      1. 상태 배너  : /api/v1/collector/status  → 수집 상태, 마지막 성공 후 경과 시간, 실패 사유
+      2. 코인 카드  : /api/v1/prices            → 현재가, 전일 대비, 거래량
+      3. 꺾은선     : /api/v1/prices/{market}/history (처음 한 번) + 이후에는 새 시세를 이어 붙임
+  -->
   <style>
-    body { font-family: system-ui, sans-serif; margin: 24px; color: #1f2328; }
-    h1 { font-size: 22px; margin: 0 0 12px; }
-    .status { display: inline-block; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 14px; }
-    .OK { background: #dafbe1; color: #116329; }
-    .RECOVERED { background: #ddf4ff; color: #0550ae; }
-    .DELAYED { background: #fff8c5; color: #7d4e00; }
-    .FAILED, .ERROR { background: #ffebe9; color: #a40e26; }
-    .meta { color: #59636e; font-size: 14px; margin: 8px 0 16px; }
-    table { border-collapse: collapse; width: 100%; max-width: 760px; }
-    th, td { padding: 8px 10px; border-bottom: 1px solid #d1d9e0; text-align: right; }
-    th:first-child, td:first-child { text-align: left; }
-    .up { color: #cf222e; } .down { color: #0969da; }
-    .stale td { color: #8c959f; }
+    /* ---- 색상: 라이트/다크 모드를 변수로 바꾼다 ---------------------- */
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #6b7480;
+      --border: #e3e6ea;
+      --up: #d6336c;      /* 상승 (국내 관례: 빨강) */
+      --down: #1c7ed6;    /* 하락 (파랑) */
+      --flat: #868e96;
+      --ok-bg: #e6f6ec;       --ok-fg: #1e7b3c;
+      --recovered-bg: #e3f0ff; --recovered-fg: #1857b6;
+      --delayed-bg: #fff4d6;  --delayed-fg: #8a5a00;
+      --failed-bg: #ffe7e7;   --failed-fg: #b42318;
+      --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1216;
+        --card: #171b21;
+        --text: #e6e9ed;
+        --muted: #9aa3ad;
+        --border: #262c34;
+        --up: #ff6b8b;
+        --down: #5aa9ff;
+        --flat: #8a939d;
+        --ok-bg: #12301f;       --ok-fg: #6fdc95;
+        --recovered-bg: #132a46; --recovered-fg: #7cb5ff;
+        --delayed-bg: #3a2d0a;  --delayed-fg: #f5c45a;
+        --failed-bg: #3d1414;   --failed-fg: #ff8a80;
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+      font-variant-numeric: tabular-nums;  /* 숫자 폭을 같게 해서 값이 바뀌어도 흔들리지 않게 */
+    }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 40px; }
+
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    h1 { font-size: 22px; margin: 0; }
+    .sub { color: var(--muted); font-size: 13px; }
+
+    /* ---- 1. 상태 배너 ------------------------------------------------ */
+    .banner {
+      margin: 16px 0 20px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      display: flex; gap: 12px; align-items: flex-start;
+      background: var(--ok-bg); color: var(--ok-fg);
+    }
+    .banner .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; margin-top: 6px; flex: none; }
+    .banner.OK .dot, .banner.RECOVERED .dot { animation: pulse 2s infinite; }
+    .banner .title { font-weight: 700; }
+    .banner .detail { font-size: 13px; margin-top: 4px; opacity: .9; }
+    .banner.RECOVERED { background: var(--recovered-bg); color: var(--recovered-fg); }
+    .banner.DELAYED   { background: var(--delayed-bg);   color: var(--delayed-fg); }
+    .banner.FAILED, .banner.ERROR { background: var(--failed-bg); color: var(--failed-fg); }
+    @keyframes pulse { 50% { opacity: .35; } }
+
+    /* ---- 2. 코인 카드 ------------------------------------------------ */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      transition: opacity .3s;
+    }
+    .stale .card { opacity: .55; }  /* 수집이 멈추면 카드를 흐리게 */
+    .card .name { font-weight: 600; }
+    .card .code { color: var(--muted); font-size: 12px; margin-left: 4px; }
+    .card .price {
+      font-size: 26px; font-weight: 700; margin: 10px 0 2px;
+      border-radius: 6px; padding: 0 4px; margin-left: -4px;
+    }
+    .card .change { font-size: 14px; font-weight: 600; }
+    .up { color: var(--up); }
+    .down { color: var(--down); }
+    .flat { color: var(--flat); }
+    .card .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .card svg { display: block; width: 100%; height: 56px; margin-top: 12px; overflow: visible; }
+
+    /* ---- 3. 값이 바뀌면 잠깐 깜빡임 ----------------------------------- */
+    .flash-up   { animation: flash-up 1.2s ease-out; }
+    .flash-down { animation: flash-down 1.2s ease-out; }
+    @keyframes flash-up   { from { background: color-mix(in srgb, var(--up) 22%, transparent); } }
+    @keyframes flash-down { from { background: color-mix(in srgb, var(--down) 22%, transparent); } }
+
+    footer { color: var(--muted); font-size: 12px; margin-top: 20px; text-align: center; }
+
+    /* ---- 4. 좁은 화면 (휴대폰) ---------------------------------------- */
+    @media (max-width: 480px) {
+      main { padding: 16px 12px 32px; }
+      h1 { font-size: 20px; }
+      .card .price { font-size: 22px; }
+    }
   </style>
 </head>
 <body>
-  <h1>실시간 시세</h1>
-  <span id="status" class="status">불러오는 중</span>
-  <div class="meta" id="meta"></div>
-  <table>
-    <thead>
-      <tr><th>코인</th><th>현재가(원)</th><th>전일 대비</th><th>거래소 시각</th></tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
+  <main>
+    <header>
+      <h1>실시간 시세</h1>
+      <span class="sub">업비트 · 10초마다 갱신 · 시각은 KST</span>
+    </header>
+
+    <div id="banner" class="banner">
+      <span class="dot"></span>
+      <div>
+        <div class="title" id="banner-title">불러오는 중</div>
+        <div class="detail" id="banner-detail"></div>
+      </div>
+    </div>
+
+    <section id="grid" class="grid"></section>
+
+    <footer>
+      시세 데이터: 업비트 공개 API · 이 화면은 시세 조회 전용입니다
+    </footer>
+  </main>
 
   <script>
-    const REFRESH_MS = 10000;
-    // 서버는 UTC로 주고, 화면에서만 KST로 바꾼다
-    const kst = (iso) => iso
-      ? new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false })
-      : "-";
-    const won = (s) => Number(s).toLocaleString("ko-KR", { maximumFractionDigits: 8 });
-    const pct = (s) => s === null ? "-" : (Number(s) * 100).toFixed(2) + "%";
+    // ================================================================
+    // 설정과 상태
+    // ================================================================
+    const REFRESH_MS = 10000;   // 서버 수집 주기와 같게
+    const CHART_POINTS = 60;    // 꺾은선에 그릴 점 개수 (10초 × 60 = 약 10분)
+
+    const series = {};          // 코인별 꺾은선 데이터 { "KRW-BTC": [{t, price}, ...] }
+    const cards = {};           // 코인별 카드 DOM { "KRW-BTC": {root, price, ...} }
+    let collectorStatus = null; // 마지막으로 받은 수집 상태 (경과 시간을 1초마다 다시 그리려고 보관)
+
+    // ================================================================
+    // 표시 형식
+    // ================================================================
+    const kst = (iso) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false });
+    const kstTime = (iso) => new Date(iso).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: false });
+    const won = (v) => Number(v).toLocaleString("ko-KR", { maximumFractionDigits: 8 });
+    const trend = (rate) => (rate > 0 ? "up" : rate < 0 ? "down" : "flat");
+
+    function changeText(rate) {
+      if (rate === null) return "-";
+      const arrow = rate > 0 ? "▲" : rate < 0 ? "▼" : "";
+      return `${arrow} ${(Math.abs(rate) * 100).toFixed(2)}%`;
+    }
+
+    function volumeText(v) {
+      const n = Number(v);
+      if (n >= 1e8) return (n / 1e8).toFixed(1) + "억";
+      if (n >= 1e4) return (n / 1e4).toFixed(1) + "만";
+      return n.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+    }
+
+    function elapsedText(iso) {
+      if (!iso) return "기록 없음";
+      const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+      if (s < 60) return `${s}초 전`;
+      if (s < 3600) return `${Math.floor(s / 60)}분 ${s % 60}초 전`;
+      return `${Math.floor(s / 3600)}시간 ${Math.floor((s % 3600) / 60)}분 전`;
+    }
+
+    // ================================================================
+    // 1. 상태 배너
+    // ================================================================
+    const STATUS_TEXT = {
+      OK: "정상 수집 중",
+      RECOVERED: "복구됨 · 안정화 확인 중",
+      DELAYED: "수집 지연 · 화면의 시세가 오래됐을 수 있습니다",
+      FAILED: "수집 중단 · 화면의 시세가 오래됐습니다",
+    };
+
+    // 실패 사유 → 사람이 읽는 설명 (docs/architecture.md 5.1)
+    const REASON_TEXT = {
+      timeout: "외부 API 응답 시간 초과",
+      connect_error: "외부 API 연결 실패",
+      http_error: "외부 API 오류 응답",
+      parse_error: "외부 API 응답 형식 오류",
+    };
+
+    function renderBanner() {
+      const banner = document.getElementById("banner");
+      const title = document.getElementById("banner-title");
+      const detail = document.getElementById("banner-detail");
+      const c = collectorStatus;
+      if (!c) return;
+
+      banner.className = "banner " + c.status;
+      title.textContent = STATUS_TEXT[c.status] || c.status;
+
+      const parts = [`마지막 수집 성공 ${elapsedText(c.last_success_at)}`];
+      // 정상(OK)이 아닐 때만 실패 정보를 보여준다
+      if (c.status !== "OK" && c.last_failure) {
+        const f = c.last_failure;
+        const code = f.http_status ? ` ${f.http_status}` : "";
+        parts.push(`최근 실패: ${REASON_TEXT[f.reason] || f.reason} (${f.reason}${code}, ${kstTime(f.at)})`);
+        parts.push(`최근 10분 실패 ${c.failures_last_10m}회`);
+      }
+      detail.textContent = parts.join(" · ");
+    }
+
+    function renderBannerError(message) {
+      collectorStatus = null;  // 1초마다 도는 renderBanner가 이 오류 표시를 덮어쓰지 않게
+      document.getElementById("banner").className = "banner ERROR";
+      document.getElementById("banner-title").textContent = "서버에 연결할 수 없습니다";
+      document.getElementById("banner-detail").textContent = message;
+    }
+
+    // ================================================================
+    // 2. 코인 카드
+    // ================================================================
+    // 카드는 코인마다 한 번만 만들고, 이후에는 글자만 바꾼다 (그래야 깜빡임 효과를 줄 수 있다)
+    function createCard(item) {
+      const root = document.createElement("article");
+      root.className = "card";
+      root.innerHTML = `
+        <div><span class="name"></span><span class="code"></span></div>
+        <div class="price"></div>
+        <div class="change"></div>
+        <svg viewBox="0 0 200 56" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div class="meta"><span class="volume"></span><span class="time"></span></div>`;
+      // 서버에서 온 글자는 innerHTML이 아니라 textContent로 넣는다
+      root.querySelector(".name").textContent = item.korean_name;
+      root.querySelector(".code").textContent = item.market;
+      document.getElementById("grid").appendChild(root);
+
+      return {
+        root,
+        price: root.querySelector(".price"),
+        change: root.querySelector(".change"),
+        chart: root.querySelector("svg"),
+        volume: root.querySelector(".volume"),
+        time: root.querySelector(".time"),
+        lastPrice: null,
+      };
+    }
+
+    function renderCard(item) {
+      const card = cards[item.market] || (cards[item.market] = createCard(item));
+      const price = Number(item.trade_price);
+      const rate = item.change_rate === null ? null : Number(item.change_rate);
+
+      // 3. 직전 값보다 오르면 빨강, 내리면 파랑으로 잠깐 깜빡임
+      if (card.lastPrice !== null && price !== card.lastPrice) {
+        const cls = price > card.lastPrice ? "flash-up" : "flash-down";
+        card.price.classList.remove("flash-up", "flash-down");
+        void card.price.offsetWidth;  // 애니메이션을 처음부터 다시 시작시키는 트릭
+        card.price.classList.add(cls);
+      }
+      card.lastPrice = price;
+
+      card.price.textContent = won(price) + "원";
+      card.change.textContent = changeText(rate);
+      card.change.className = "change " + trend(rate);
+      card.volume.textContent = "24h 거래량 " + volumeText(item.acc_trade_volume_24h);
+      card.time.textContent = kstTime(item.exchange_ts);
+
+      renderChart(card.chart, series[item.market] || []);
+    }
+
+    // ================================================================
+    // 꺾은선 그래프 (SVG)
+    // ================================================================
+    // 가격 목록을 SVG 좌표로 바꿔 선(polyline)과 그 아래 영역(polygon)을 그린다.
+    // 가로 200, 세로 56 크기의 좌표계를 쓰고, CSS로 카드 너비에 맞게 늘린다.
+    function renderChart(svg, points) {
+      const W = 200, H = 56, PAD = 4;
+      if (points.length === 0) { svg.innerHTML = ""; return; }
+
+      const prices = points.map((p) => p.price);
+      const min = Math.min(...prices), max = Math.max(...prices);
+      const range = max - min || 1;  // 값이 모두 같으면 0으로 나누지 않게
+
+      const x = (i) => points.length === 1 ? W / 2 : (i / (points.length - 1)) * W;
+      const y = (v) => max === min ? H / 2 : PAD + (1 - (v - min) / range) * (H - PAD * 2);
+      const coords = points.map((p, i) => `${x(i).toFixed(1)},${y(p.price).toFixed(1)}`);
+
+      // 구간 처음보다 마지막이 높으면 상승색
+      const color = `var(--${trend(prices[prices.length - 1] - prices[0])})`;
+      const last = coords[coords.length - 1].split(",");
+
+      svg.innerHTML = `
+        <polygon points="0,${H} ${coords.join(" ")} ${W},${H}" fill="${color}" opacity="0.12"></polygon>
+        <polyline points="${coords.join(" ")}" fill="none" stroke="${color}" stroke-width="2"
+                  vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"></polyline>
+        <circle cx="${last[0]}" cy="${last[1]}" r="2.5" fill="${color}"></circle>`;
+    }
+
+    // 처음 한 번만 이력 API로 최근 시세를 받아 온다 (최신순으로 오므로 뒤집는다)
+    async function loadHistory(market) {
+      const res = await fetch(`/api/v1/prices/${encodeURIComponent(market)}/history?limit=${CHART_POINTS}`);
+      if (!res.ok) return;
+      const body = await res.json();
+      series[market] = body.items
+        .map((it) => ({ t: it.collected_at, price: Number(it.trade_price) }))
+        .reverse();
+    }
+
+    // 이후에는 새로 수집된 시세만 꺾은선 끝에 붙인다 (같은 수집 시각이면 붙이지 않음)
+    function appendPoint(item) {
+      const s = series[item.market] || (series[item.market] = []);
+      if (s.length && s[s.length - 1].t === item.collected_at) return;
+      s.push({ t: item.collected_at, price: Number(item.trade_price) });
+      if (s.length > CHART_POINTS) s.shift();
+    }
+
+    // ================================================================
+    // 주기 실행
+    // ================================================================
+    async function getJson(url) {
+      const res = await fetch(url, { cache: "no-store" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ? `${body.error.code} (${res.status})` : `HTTP ${res.status}`);
+      return body;
+    }
 
     async function refresh() {
-      const statusEl = document.getElementById("status");
-      const metaEl = document.getElementById("meta");
       try {
-        const res = await fetch("/api/v1/prices", { cache: "no-store" });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ? body.error.code : res.status);
+        const [prices, status] = await Promise.all([
+          getJson("/api/v1/prices"),
+          getJson("/api/v1/collector/status"),
+        ]);
 
-        const c = body.collector;
-        statusEl.textContent = "수집 상태: " + c.status;
-        statusEl.className = "status " + c.status;
-        metaEl.textContent = "마지막 수집 성공: " + kst(c.last_success_at)
-          + (c.stale ? " · 데이터가 오래됐습니다" : "");
+        collectorStatus = status;
+        renderBanner();
+        document.getElementById("grid").classList.toggle("stale", prices.collector.stale);
 
-        const tbody = document.getElementById("rows");
-        tbody.replaceChildren(...body.items.map((it) => {
-          const tr = document.createElement("tr");
-          if (c.stale) tr.className = "stale";
-          const rate = it.change_rate === null ? 0 : Number(it.change_rate);
-          const cells = [
-            it.korean_name + " (" + it.market + ")",
-            won(it.trade_price),
-            pct(it.change_rate),
-            kst(it.exchange_ts),
-          ];
-          cells.forEach((text, i) => {
-            const td = document.createElement("td");
-            td.textContent = text;
-            if (i === 2) td.className = rate > 0 ? "up" : rate < 0 ? "down" : "";
-            tr.appendChild(td);
-          });
-          return tr;
-        }));
+        // 처음 보는 코인은 이력부터 받아 온다
+        await Promise.all(prices.items.filter((it) => !series[it.market]).map((it) => loadHistory(it.market)));
+
+        for (const item of prices.items) {
+          appendPoint(item);
+          renderCard(item);
+        }
       } catch (e) {
-        statusEl.textContent = "조회 실패: " + e.message;
-        statusEl.className = "status ERROR";
+        renderBannerError("조회 실패: " + e.message);
+        document.getElementById("grid").classList.add("stale");
       }
     }
 
     refresh();
     setInterval(refresh, REFRESH_MS);
+    setInterval(renderBanner, 1000);  // "N초 전"을 1초마다 다시 계산
   </script>
 </body>
 </html>
