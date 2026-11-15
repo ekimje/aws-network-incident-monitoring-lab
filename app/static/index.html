@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>실시간 시세</title>
+  <!-- ALB는 / 와 /api/* 만 앱으로 보내므로, CSS·JS는 파일로 나누지 않고 이 안에 둔다 -->
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #1f2328; }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    .status { display: inline-block; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 14px; }
+    .OK { background: #dafbe1; color: #116329; }
+    .RECOVERED { background: #ddf4ff; color: #0550ae; }
+    .DELAYED { background: #fff8c5; color: #7d4e00; }
+    .FAILED, .ERROR { background: #ffebe9; color: #a40e26; }
+    .meta { color: #59636e; font-size: 14px; margin: 8px 0 16px; }
+    table { border-collapse: collapse; width: 100%; max-width: 760px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #d1d9e0; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    .up { color: #cf222e; } .down { color: #0969da; }
+    .stale td { color: #8c959f; }
+  </style>
+</head>
+<body>
+  <h1>실시간 시세</h1>
+  <span id="status" class="status">불러오는 중</span>
+  <div class="meta" id="meta"></div>
+  <table>
+    <thead>
+      <tr><th>코인</th><th>현재가(원)</th><th>전일 대비</th><th>거래소 시각</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script>
+    const REFRESH_MS = 10000;
+    // 서버는 UTC로 주고, 화면에서만 KST로 바꾼다
+    const kst = (iso) => iso
+      ? new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false })
+      : "-";
+    const won = (s) => Number(s).toLocaleString("ko-KR", { maximumFractionDigits: 8 });
+    const pct = (s) => s === null ? "-" : (Number(s) * 100).toFixed(2) + "%";
+
+    async function refresh() {
+      const statusEl = document.getElementById("status");
+      const metaEl = document.getElementById("meta");
+      try {
+        const res = await fetch("/api/v1/prices", { cache: "no-store" });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ? body.error.code : res.status);
+
+        const c = body.collector;
+        statusEl.textContent = "수집 상태: " + c.status;
+        statusEl.className = "status " + c.status;
+        metaEl.textContent = "마지막 수집 성공: " + kst(c.last_success_at)
+          + (c.stale ? " · 데이터가 오래됐습니다" : "");
+
+        const tbody = document.getElementById("rows");
+        tbody.replaceChildren(...body.items.map((it) => {
+          const tr = document.createElement("tr");
+          if (c.stale) tr.className = "stale";
+          const rate = it.change_rate === null ? 0 : Number(it.change_rate);
+          const cells = [
+            it.korean_name + " (" + it.market + ")",
+            won(it.trade_price),
+            pct(it.change_rate),
+            kst(it.exchange_ts),
+          ];
+          cells.forEach((text, i) => {
+            const td = document.createElement("td");
+            td.textContent = text;
+            if (i === 2) td.className = rate > 0 ? "up" : rate < 0 ? "down" : "";
+            tr.appendChild(td);
+          });
+          return tr;
+        }));
+      } catch (e) {
+        statusEl.textContent = "조회 실패: " + e.message;
+        statusEl.className = "status ERROR";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>

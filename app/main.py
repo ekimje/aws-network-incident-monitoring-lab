@@ -1,168 +1,137 @@
-"""실시간 시세 수집·조회 서비스
+"""시세 수집·조회 서비스 진입점.
 
-- 15초마다 업비트에서 코인 현재가를 받아 PostgreSQL에 저장한다 (백그라운드 스레드)
-- GET /        : 종목별 최신 시세를 HTML 표로 보여준다
-- GET /health  : 서비스 상태
-- GET /metrics : Prometheus 메트릭
+하나의 FastAPI 프로세스 안에서 두 가지 일을 한다 (docs/architecture.md 2장).
+- Collector: 백그라운드 스레드로 주기마다 업비트 시세를 받아 저장 (collector.py)
+- API Server: /api/v1 조회 API (api.py), 프론트 HTML, 운영용 엔드포인트 (이 파일)
+
+운영용 엔드포인트
+- GET /health  : 프로세스가 살아 있으면 항상 200 (ALB 헬스 체크용, DB를 보지 않는다)
+- GET /ready   : DB 연결까지 확인, 실패하면 503
+- GET /metrics : Prometheus 메트릭 (모니터링 서버만 접근, ALB로는 노출하지 않음)
 """
 
-import json
 import logging
-import os
-import threading
 import time
-import urllib.request
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import psycopg
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import Match
 
-# 로그를 시간·레벨·이름과 함께 출력한다 (docker compose logs 에 나온다)
+import collector
+import db
+from api import ApiError, router
+from metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS_TOTAL
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("collector")
+logger = logging.getLogger("app")
+
+INDEX_HTML = Path(__file__).with_name("static").joinpath("index.html").read_text(encoding="utf-8")
 
 
-# ---------------------------------------------------------------
-# 설정
-# ---------------------------------------------------------------
-MARKETS = ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
-COLLECT_INTERVAL_SECONDS = 15
-UPBIT_TICKER_URL = "https://api.upbit.com/v1/ticker?markets=" + ",".join(MARKETS)
-
-# DB 접속 정보는 환경변수에서 읽는다 (.env 파일 참고)
-DB_CONNINFO = (
-    f"host={os.environ['DB_HOST']} "
-    f"port={os.environ['DB_PORT']} "
-    f"dbname={os.environ['DB_NAME']} "
-    f"user={os.environ['DB_USER']} "
-    f"password={os.environ['DB_PASSWORD']} "
-    "connect_timeout=3"  # 3초 안에 연결 안 되면 실패로 본다 (방화벽이 패킷을 버리는 경우)
-)
-
-# TODO(메트릭): 여기에 커스텀 메트릭을 정의한다
-#   예) 수집 성공·실패 수(Counter), 마지막 갱신 시각(Gauge),
-#       업비트 API 응답시간(Histogram), 남은 요청 수(Gauge)
-
-
-# ---------------------------------------------------------------
-# DB
-# ---------------------------------------------------------------
-def create_table():
-    """앱 시작 시 prices 테이블이 없으면 만든다."""
-    with psycopg.connect(DB_CONNINFO) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS prices (
-                id           SERIAL PRIMARY KEY,
-                market       TEXT        NOT NULL,
-                trade_price  NUMERIC     NOT NULL,
-                collected_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-
-
-def save_prices(tickers):
-    """업비트 응답(종목 목록)을 prices 테이블에 저장한다."""
-    with psycopg.connect(DB_CONNINFO) as conn:
-        for ticker in tickers:
-            conn.execute(
-                "INSERT INTO prices (market, trade_price) VALUES (%s, %s)",
-                (ticker["market"], ticker["trade_price"]),
-            )
-    # with 블록이 끝나면 자동으로 commit 된다
-
-
-def get_latest_prices():
-    """종목별로 가장 최근에 저장된 시세 한 줄씩 가져온다."""
-    with psycopg.connect(DB_CONNINFO) as conn:
-        # DISTINCT ON (market): 종목마다 첫 번째 행만 남긴다
-        # ORDER BY ... collected_at DESC 이므로 첫 번째 행 = 가장 최근 시세
-        return conn.execute(
-            """
-            SELECT DISTINCT ON (market) market, trade_price, collected_at
-            FROM prices
-            ORDER BY market, collected_at DESC
-            """
-        ).fetchall()
-
-
-# ---------------------------------------------------------------
-# 수집기
-# ---------------------------------------------------------------
-def fetch_tickers():
-    """업비트 /v1/ticker에서 여러 종목 현재가를 한 번에 받아온다. (API 키 필요 없음)"""
-    with urllib.request.urlopen(UPBIT_TICKER_URL, timeout=5) as response:
-        # TODO(메트릭): 응답 헤더 Remaining-Req 에서 남은 요청 수를 읽어 Gauge로 기록
-        return json.load(response)
-
-
-def collect_forever():
-    """15초마다 시세를 받아 DB에 저장한다. 실패해도 멈추지 않고 다음 주기에 다시 시도한다."""
-    while True:
-        try:
-            tickers = fetch_tickers()
-            save_prices(tickers)
-        except Exception:
-            logger.exception("수집 실패")
-        # TODO(메트릭): 수집 성공·실패 수, 응답시간, 마지막 갱신 시각을 여기서 기록
-        time.sleep(COLLECT_INTERVAL_SECONDS)
-
-
-# ---------------------------------------------------------------
-# 웹 (FastAPI)
-# ---------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app):
-    # 앱이 시작될 때 한 번 실행된다
-    create_table()
-    threading.Thread(target=collect_forever, daemon=True).start()
+    # DB가 아직 안 떠 있어도 기다리지 않고 시작한다. 그동안 /ready와 조회 API는 503이다.
+    db.pool.open(wait=False)
+    stop = collector.start()
     yield
+    stop.set()
+    db.pool.close()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(title="시세 수집·조회 서비스", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(router)
 
 
+# --- 요청 메트릭 -------------------------------------------------------
+def route_template(request):
+    """요청이 걸리는 라우트의 템플릿 경로. 어떤 라우트에도 안 걸리면 'unmatched'."""
+    for route in request.app.router.routes:
+        match, _ = route.matches(request.scope)
+        if match == Match.FULL:
+            return route.path
+    return "unmatched"
+
+
+@app.middleware("http")
+async def record_http_metrics(request: Request, call_next):
+    path = route_template(request)
+    start = time.perf_counter()
+    status_code = 500  # 처리 중 예외가 밖으로 나가면 500으로 센다
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        HTTP_REQUEST_DURATION.labels(path=path).observe(time.perf_counter() - start)
+        HTTP_REQUESTS_TOTAL.labels(path=path, status=str(status_code)).inc()
+
+
+# --- 오류 응답 (docs/api.md 3장) ----------------------------------------
+def error_response(http_status, code, message):
+    return JSONResponse(
+        status_code=http_status,
+        content={"error": {"code": code, "message": message}},
+    )
+
+
+@app.exception_handler(ApiError)
+async def handle_api_error(request, exc: ApiError):
+    return error_response(exc.http_status, exc.code, exc.message)
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request, exc: RequestValidationError):
+    # FastAPI 기본값은 422지만, 명세대로 400 INVALID_PARAMETER로 바꾼다
+    first = exc.errors()[0] if exc.errors() else {}
+    where = ".".join(str(p) for p in first.get("loc", []) if p != "query")
+    return error_response(400, "INVALID_PARAMETER", f"{where}: {first.get('msg', '잘못된 값')}")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def handle_http_exception(request, exc: StarletteHTTPException):
+    codes = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
+    return error_response(exc.status_code, codes.get(exc.status_code, "HTTP_ERROR"), str(exc.detail))
+
+
+@app.exception_handler(psycopg.OperationalError)
+async def handle_db_unavailable(request, exc):
+    # DB 연결 실패·풀 대기 시간 초과 (PoolTimeout도 OperationalError다)
+    logger.warning("DB 연결 실패: %s", exc)
+    return error_response(503, "DB_UNAVAILABLE", "DB에 연결할 수 없습니다")
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected(request, exc):
+    logger.exception("처리하지 못한 예외", exc_info=exc)
+    return error_response(500, "INTERNAL_ERROR", "서버 내부 오류")
+
+
+# --- 화면·운영용 엔드포인트 ---------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def index():
-    rows = get_latest_prices()
-    table_rows = "".join(
-        f"<tr><td>{market}</td><td>{trade_price:,.0f}</td>"
-        f"<td>{collected_at:%Y-%m-%d %H:%M:%S %Z}</td></tr>"
-        for market, trade_price, collected_at in rows
-    )
-    return f"""
-    <html>
-      <head><meta charset="utf-8"><title>실시간 시세</title></head>
-      <body>
-        <h1>실시간 시세</h1>
-        <table border="1" cellpadding="6">
-          <tr><th>종목</th><th>현재가(원)</th><th>수집 시각</th></tr>
-          {table_rows}
-        </table>
-      </body>
-    </html>
-    """
+    return INDEX_HTML
 
 
 @app.get("/health")
 def health():
-    """DB에 연결할 수 있으면 200, 없으면 503을 돌려준다."""
-    try:
-        with psycopg.connect(DB_CONNINFO, connect_timeout=2) as conn:
-            conn.execute("SELECT 1")
-    except psycopg.Error:
-        logger.warning("헬스체크: DB 연결 실패")
-        return JSONResponse(status_code=503, content={"status": "error", "db": "unreachable"})
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    db.ping()  # 실패하면 위 핸들러가 503 DB_UNAVAILABLE로 응답한다
     return {"status": "ok", "db": "ok"}
 
 
 @app.get("/metrics")
 def metrics():
-    # prometheus_client가 기본으로 모으는 메트릭(파이썬 프로세스 정보 등)을 그대로 내보낸다
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

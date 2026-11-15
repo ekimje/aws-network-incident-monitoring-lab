@@ -6,7 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+# 앱 코드 (.env, 테스트 등은 .dockerignore로 뺀다)
+COPY *.py schema.sql ./
+COPY static ./static
 
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
